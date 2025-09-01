@@ -2,10 +2,11 @@ import pandas as pd
 import numpy as np
 import random
 from ConfigSpace import ConfigurationSpace
-from ConfigSpace.hyperparameters import UniformFloatHyperparameter, UniformIntegerHyperparameter, CategoricalHyperparameter
+from ConfigSpace.hyperparameters import UniformFloatHyperparameter, UniformIntegerHyperparameter, CategoricalHyperparameter, Constant
 from dehb import DEHB
 from sklearn.metrics import pairwise_distances_argmin_min
 from src.utils.ezr import *
+from sklearn.preprocessing import LabelEncoder
 
 
 def dehbRuns(args,i_d):
@@ -15,11 +16,17 @@ def dehbRuns(args,i_d):
     target_cols = [nm.txt for nm in i_d.cols.y]
     #print(target_cols)
     # ==== LOAD DATASET ====
+
+    sym_cols = [nm.txt for nm in i_d.cols.x if nm.this == SYM]
     
     df = pd.read_csv(args.dataset)
     df.replace('?', np.nan, inplace=True)
     df.dropna(inplace=True)
     #print(df.info())
+
+    for col in sym_cols:
+        le = LabelEncoder()
+        df[col] = le.fit_transform(df[col].astype(str))  # ensure all entries are strings before encoding
     chebyshevs = []
     for idx, r in df.iterrows():
         chebyshevs.append(chebyshev(i_d, r))
@@ -32,21 +39,37 @@ def dehbRuns(args,i_d):
 
     # ==== CONFIGURATION SPACE ====
     cs = ConfigurationSpace()
+
     for i, col in enumerate(df.drop(columns=target_cols).columns):
         col_vals = df[col].dropna().values  # drop NaN for min/max or unique
-        # Integer columns
-        if np.issubdtype(col_vals.dtype, np.integer):
-            hp = UniformIntegerHyperparameter(f"x{i}", int(col_vals.min()), int(col_vals.max()))
-        # Float columns
-        elif np.issubdtype(col_vals.dtype, np.floating):
-            hp = UniformFloatHyperparameter(f"x{i}", float(col_vals.min()), float(col_vals.max()))
-        # String / object columns → categorical
-        elif np.issubdtype(col_vals.dtype, np.object_) or isinstance(col_vals[0], str):
+
+        # Handle categorical / object columns
+        if np.issubdtype(col_vals.dtype, np.object_) or isinstance(col_vals[0], str):
             unique_vals = sorted(set(col_vals))
-            hp = CategoricalHyperparameter(f"x{i}", unique_vals)
+            if len(unique_vals) == 1:
+                hp = Constant(f"x{i}", unique_vals[0])
+            else:
+                hp = CategoricalHyperparameter(f"x{i}", unique_vals)
+
+        # Handle float columns
+        elif np.issubdtype(col_vals.dtype, np.floating):
+            min_val, max_val = float(np.min(col_vals)), float(np.max(col_vals))
+            if min_val == max_val:
+                hp = Constant(f"x{i}", min_val)
+            else:
+                hp = UniformFloatHyperparameter(f"x{i}", min_val, max_val)
+
+        # Handle integer columns
+        elif np.issubdtype(col_vals.dtype, np.integer):
+            min_val, max_val = int(np.min(col_vals)), int(np.max(col_vals))
+            if min_val == max_val:
+                hp = Constant(f"x{i}", min_val)
+            else:
+                hp = UniformIntegerHyperparameter(f"x{i}", min_val, max_val)
+
         else:
             raise ValueError(f"Unsupported column type for {col}")
-        
+
         cs.add_hyperparameter(hp)
 
     # ==== EVALUATION FUNCTION ====
@@ -65,6 +88,7 @@ def dehbRuns(args,i_d):
         min_fidelity=1, 
         max_fidelity=10,
         n_workers=1,
+        verbose=False
     )
 
     done = []
@@ -78,7 +102,7 @@ def dehbRuns(args,i_d):
         # When you received the result, feed them back to the optimizer
         dehb.tell(job_info, result)
 
-    print(done)
+    #print(done)
 
 
     # traj, runtime, history = dehb.run(fevals=args.last)
