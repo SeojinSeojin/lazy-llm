@@ -15,3 +15,6 @@ imgcat
 pillow
 einops
 hyperopt
+scikit-learn
+ConfigSpace
+dehb
