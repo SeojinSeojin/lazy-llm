@@ -8,6 +8,7 @@ from langchain_huggingface.llms import HuggingFacePipeline
 from langchain_openai import OpenAI
 from langchain_google_genai import ChatGoogleGenerativeAI
 from transformers import AutoModelForCausalLM, AutoTokenizer, pipeline, BitsAndBytesConfig
+from dotenv import load_dotenv
 
 class LLM:
     """
@@ -104,14 +105,15 @@ class API_LLM(LLM):
 
     def get_pipeline(self):
         if "gemini" in self.model_name:
+            load_dotenv()
             if "GOOGLE_API_KEY" not in os.environ:
                 print("Unable to find the API key please enter here:")
                 os.environ["GOOGLE_API_KEY"] = getpass.getpass()
             return ChatGoogleGenerativeAI(
                         model= self.model_name,
                         temperature= self.temperature,  
-
-                        top_p= self.top_p
+                        top_p= self.top_p,
+                        api_key=os.getenv("GOOGLE_API_KEY") 
                     )
 
         elif "gpt" in self.model_name:
