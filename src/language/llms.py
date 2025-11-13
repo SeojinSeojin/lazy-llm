@@ -51,6 +51,8 @@ class Local_LLM(LLM):
                 bnb_8bit_compute_dtype=torch.bfloat16  
             )
 
+        self.pipe = self.get_pipeline()
+
     def get_pipeline(self):
 
         if not self.cache:
@@ -68,7 +70,7 @@ class Local_LLM(LLM):
 
         return pipe
 
-    def get_params() -> str:
+    def get_params(self, model=None) -> str:
         total_params = sum(p.numel() for p in self.model.parameters())
         if total_params >= 1e9:
             return f"{total_params / 1e9:.1f}B"
@@ -96,38 +98,94 @@ class Local_LLM(LLM):
         gc.collect()
         shutil.rmtree(self.temp_dir)
 
+    def generate_text(self, messages: list) -> str:
+        """Generate text for chat-style messages (local HuggingFace)."""
+        prompt = self.tokenizer.apply_chat_template(messages, tokenize=False, add_generation_prompt=True)
+        outputs = self.pipe(prompt, max_new_tokens=self.max_tokens, do_sample=True,
+                            temperature=self.temperature, top_p=self.top_p)
+        return outputs[0]['generated_text'][len(prompt):]  # remove prompt prefix
+
+# --------------------------------------------------------------------
+# API LLM (OpenAI / Gemini)
+# --------------------------------------------------------------------
 class API_LLM(LLM):
-    """
+    """API-based LLM (Google Gemini, OpenAI GPT)."""
 
-    """
-    def __init__(self, model_name : str, temperature : float, max_tokens : int, top_p : float, **kwargs):
+    def __init__(self, model_name, temperature, max_tokens, top_p, **kwargs):
         super().__init__(model_name, temperature, max_tokens, top_p)
+        self.client = None
+        self._init_client()
 
-    def get_pipeline(self):
-        if "gemini" in self.model_name:
-            load_dotenv()
+    def _init_client(self):
+        """Initialize API client safely."""
+        load_dotenv()
+        if "gemini" in self.model_name.lower():
             if "GOOGLE_API_KEY" not in os.environ:
-                print("Unable to find the API key please enter here:")
-                os.environ["GOOGLE_API_KEY"] = getpass.getpass()
-            return ChatGoogleGenerativeAI(
-                        model= self.model_name,
-                        temperature= self.temperature,  
-                        top_p= self.top_p,
-                        api_key=os.getenv("GOOGLE_API_KEY") 
-                    )
-
-        elif "gpt" in self.model_name:
+                os.environ["GOOGLE_API_KEY"] = getpass.getpass("GOOGLE_API_KEY: ")
+            self.client = ChatGoogleGenerativeAI(
+                model=self.model_name,
+                temperature=self.temperature,
+                top_p=self.top_p,
+                api_key=os.getenv("GOOGLE_API_KEY"),
+            )
+        elif "gpt" in self.model_name.lower():
             if "OPENAI_API_KEY" not in os.environ:
-                print("Unable to find the API key please enter here:")
-                os.environ["OPENAI_API_KEY"] = getpass.getpass()
-            return OpenAI(
-                        model= self.model_name,
-                        temperature= self.temperature,  
-                        max_tokens= self.max_tokens, 
-                        top_p= self.top_p
-                )
+                os.environ["OPENAI_API_KEY"] = getpass.getpass("OPENAI_API_KEY: ")
+            self.client = OpenAI(
+                model=self.model_name,
+                temperature=self.temperature,
+                max_tokens=self.max_tokens,
+                top_p=self.top_p,
+            )
+        else:
+            raise ValueError(f"Unsupported API model: {self.model_name}")
 
+    def generate_text(self, messages):
+        """Generate text from structured messages using the API client."""
+        if self.client is None:
+            self._init_client()  # ensure client exists
 
+        # Convert message dicts to chat format
+        text_prompt = "\n".join([f"[{m['role'].upper()}] {m['content']}" for m in messages])
 
+        try:
+            # --- Gemini ---
+            if isinstance(self.client, ChatGoogleGenerativeAI):
+                response = self.client.invoke(text_prompt)
+                # Some versions of LangChain return 'str', others return an object
+                if isinstance(response, str):
+                    return response.strip()
+                elif hasattr(response, "content") and len(response.content) > 0:
+                    return getattr(response.content[0], "text", str(response.content[0]))
+                else:
+                    return str(response)
 
-        
+            # --- OpenAI ---
+            elif isinstance(self.client, OpenAI):
+                response = self.client.invoke(text_prompt)
+                if isinstance(response, str):
+                    return response.strip()
+                elif hasattr(response, "content"):
+                    return str(response.content)
+                elif hasattr(response, "output_text"):
+                    return str(response.output_text)
+                return str(response)
+
+            else:
+                raise RuntimeError("Unknown API client type.")
+
+        except Exception as e:
+            raise RuntimeError(f"API generate_text failed: {e}")
+
+    def get_params(self, *_, **__):
+        provider = (
+            "Google" if "gemini" in self.model_name.lower()
+            else "OpenAI" if "gpt" in self.model_name.lower()
+            else "Unknown"
+        )
+        return f"{provider} API model ({self.model_name})"
+
+    def unload_model(self):
+        self.client = None
+        gc.collect()
+        print(f"[UNLOAD] API model {self.model_name} released.")

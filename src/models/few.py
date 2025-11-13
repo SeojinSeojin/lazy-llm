@@ -13,7 +13,6 @@ def FEW(args, save_results = False, k = 1, model = None):
     if model == None:
         loaded_here = True
         model =  load_model(args)
-        pipe = model.get_pipeline()
     #random.seed(args.seed)
     records = []
 
@@ -44,29 +43,97 @@ def FEW(args, save_results = False, k = 1, model = None):
             rest = clone(i, done[cut:]).rows
             best = [b[:len(i.cols.x)] for b in best]
             rest = [r[:len(i.cols.x)] for r in rest]
-            messages = load_prompt(args.dataset).getFewShot(best, rest, current[:len(i.cols.x)], cols = i.cols.x)
-            prompt = pipe.tokenizer.apply_chat_template(messages, tokenize=False, add_generation_prompt=True)
-            outputs = pipe(prompt, max_new_tokens=256,  do_sample=True, temperature=0.5, top_p=0.9) #eos_token_id=terminators,
-            print(outputs[0]['generated_text']) if args.intermediate else None
-            if "best" in outputs[0]['generated_text'][len(prompt):].lower(): return current
+            base_prompt = load_prompt(args.dataset).getFewShot(best, rest, current[:len(i.cols.x)], cols=i.cols.x)
+            prompt_variants = []
+
+            # --- (1) No Ensemble: baseline ---
+            if args.ensemble is None:
+                prompt_variants = [base_prompt]
+
+            # --- (2) Self-Consistency Ensemble: same prompt + minor variants ---
+            elif args.ensemble == "self-consistency":
+                prompt_variants = [
+                    base_prompt,
+                    base_prompt + [{"role": "system", "content": "Please think step by step before answering."}],
+                    base_prompt + [{"role": "system", "content": "Re-evaluate your reasoning carefully before deciding."}]
+                ]
+
+            # --- (3) Heterogeneous Ensemble: different prompt templates ---
+            elif args.ensemble == "heterogeneous":
+                from src.prompts.prompts import Template, Auto93Template, HpoTemplate
+                templates = [Template(), Auto93Template(), HpoTemplate()]
+                prompt_variants = [
+                    t.getFewShot(best, rest, current[:len(i.cols.x)], cols=i.cols.x)
+                    for t in templates
+                ]
+
+            # --- Run inference for all variants ---
+            votes = []
+
+            for p in prompt_variants:
+                success = False
+                retry_delay = 60  # start with 30 seconds (Gemini free-tier minimum)
+                max_retries = 5
+
+                for attempt in range(max_retries):
+                    try:
+                        text = model.generate_text(p)
+                        success = True
+                        break  # successful
+                    except Exception as e:
+                        err_msg = str(e).lower()
+                        if "429" in err_msg or "quota" in err_msg or "resourceexhausted" in err_msg:
+                            print(f"[WARN] Rate limit hit (attempt {attempt+1}/{max_retries}). "
+                                f"Retrying in {retry_delay} seconds...")
+                            time.sleep(retry_delay)
+                            retry_delay = int(retry_delay * 1.5)  # exponential backoff
+                        else:
+                            print(f"[ERROR] generate_text failed: {e}")
+                            break  # non-rate-limit error → stop retries
+
+                if not success:
+                    print(f"[ERROR] Skipping this prompt after {max_retries} failed attempts.")
+                    continue
+
+                if "best" in text.lower():
+                    votes.append(1)
+                else:
+                    votes.append(0)
+
+            # --- Voting decision (same output type as before) ---
+            if sum(votes) >= (len(votes) / 2):
+                return current
             return None
             
         
         def _smo1(todo:rows, done:rows) -> rows:
             "Guess the `top`  unlabeled row, add that to `done`, resort `done`, and repeat"
             count = 0
-            for k in todo:
-                count += 1
-                if len(done) >= args.last: break
+            for idx, k in enumerate(todo, start=1):
+                start_time = time.time()
+                if len(done) >= args.last:
+                    break
                 top = llm_guesser(k, done)
-                if(top == None): continue
-                btw(d2h(i,top))
+                if top is None:
+                    continue
+                btw(d2h(i, top))
                 done += [top]
                 done = _ranked(done, top, count)
+                elapsed_min = (time.time() - start_time) / 60
+                print(f"[TIMER] step {idx}/{len(todo)} took {elapsed_min:.2f} min")
+                count += 1
             return done
 
-        i_sampled = random.choices(i.rows, k = k)
-        return _smo1(i_sampled[args.label:], _ranked(i_sampled[:args.label]))
+
+        # todo: sampler, sample ratio to args
+        i_sampled = random.choices(i.rows, k=k)
+        todo_full = i_sampled[args.label:]
+        sample_ratio = 0.2
+        sample_size = max(1, int(len(todo_full) * sample_ratio))
+        todo_subset = random.sample(todo_full, sample_size)
+
+        print(f"[INFO] Sampling {sample_size}/{len(todo_full)} rows (~{sample_ratio*100:.0f}%) for this run.")
+        return _smo1(todo_subset, _ranked(i_sampled[:args.label]))
 
     
     if(save_results):

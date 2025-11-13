@@ -1,7 +1,7 @@
 from src.language.llms import Local_LLM, API_LLM, LLM
 
 api_model_path = {
-    "gemini" : "gemini-1.5-pro",
+    "gemini" : "gemini-2.5-flash",
     "gpt" : "gpt-4o"
  }
 
@@ -16,9 +16,7 @@ local_model_path = {
 }
 
 def load_model(args, name = None) -> LLM:
-    """
-
-    """
+    print("load_model: ",args, args.llm, name)
 
     if args.llm in api_model_path.keys() or name in api_model_path.keys():
         return API_LLM(api_model_path[args.llm] if name == None else api_model_path[name], args.temperature, args.max_tokens, args.top_p)
