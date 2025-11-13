@@ -8,6 +8,7 @@ from sklearn.gaussian_process import GaussianProcessRegressor
 from sklearn.gaussian_process.kernels import RBF, ConstantKernel as C
 from src.utils.ezr import *
 from scipy.stats import norm
+from src.sampling.index import get_sampler
 
 import warnings
 
@@ -216,9 +217,9 @@ def _ranked(i,lst:rows) -> rows:
     lst = sorted(lst, key = lambda r:d2h(i,r))
     return lst
 
-def gpms(args, what = 'UCB_GPM'):
+def gpms(args, what = 'UCB_GPM', sampler="random"):
     i = DATA(csv(args.dataset))
-    random.shuffle(i.rows)
+    get_sampler(sampler)(i, args.label) # sample till 
     if what == 'UCB_GPM':
         return _UCB_GPM(i, i.rows[args.label:], _ranked(i,i.rows[:args.label]))
     elif what == 'EI_GPM':

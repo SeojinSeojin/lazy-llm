@@ -2,11 +2,11 @@ import numpy as np
 import random
 from src.utils.ezr import *
 from hyperopt import fmin, tpe, hp, Trials, STATUS_OK
+from src.sampling.index import get_sampler
 
-
-def TPE(args):
+def TPE(args, sampler):
     i = DATA(csv(args.dataset))
-    random.shuffle(i.rows)
+    get_sampler(sampler)(i,args.label)
 
     # Extract X and Y from i.rows
     X = np.array([x[:len(i.cols.x)] for x in i.rows])

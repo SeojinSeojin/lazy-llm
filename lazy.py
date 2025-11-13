@@ -1,6 +1,7 @@
+import os
 from src.utils.config import parse_arguments
 from src.utils.ezr import *
-# from src.language import load_model
+from src.language import load_model
 from dotenv import load_dotenv
 from src.prompts import load_prompt
 from src.utils.results import save_results_txt
@@ -197,21 +198,24 @@ def warms(args):
       rxs[rx] = SOME(txt=rx, inits=[chebyshev(d,guess()) for _ in range(repeats)])
       
       gps = ['UCB_GPM', 'PI_GPM', 'EI_GPM']
+      samplers = ['random', 'distkpp', 'dpp', 'kcenter'] # better use ['random'] 
       for guesFaster in [True]:
         for what in gps:
-            rx = f"{what},{last}"
+            for sampler in samplers:
+                rx = f"{what},{sampler},{last}"
+                rxs[rx] = SOME(txt=rx)
+                for _ in range(repeats):
+                    btw(".")
+                    rxs[rx].add(chebyshev(d, gpms(args, what, sampler)[0]))
+                btw("\n")
+      for guesFaster in [True]:
+        for sampler in samplers:
+            rx = f"TPE,{sampler},{last}"
             rxs[rx] = SOME(txt=rx)
             for _ in range(repeats):
                 btw(".")
-                rxs[rx].add(chebyshev(d, gpms(args, what)[0]))
+                rxs[rx].add(TPE(args, sampler))
             btw("\n")
-      for guesFaster in [True]:
-        rx = f"TPE,{last}"
-        rxs[rx] = SOME(txt=rx)
-        for _ in range(repeats):
-            btw(".")
-            rxs[rx].add(TPE(args))
-        btw("\n")
       
       graphs = {'exploit' : [], 'LINEAR/exploit' : [], 'LLM/exploit' : []}
 
@@ -228,7 +232,7 @@ def warms(args):
         btw("\n")
 
       for  guessFaster in [True]:
-        for start in ['gemini','gpt']:
+        for start in ['gemini']:#['gemini','gpt']:
             args.llm = start
             for what,how in  scoring_policies:
                 the.GuessFaster = guessFaster
@@ -278,10 +282,13 @@ def warms(args):
 
         
 if __name__ == "__main__":
+    # print("main")
     load_dotenv()
+    # print("dotenv loaded: ", os.environ)
     args = parse_arguments()
-    # if(args.model == 'few'):
-    #     FEW(args, False)
+    # print("args: ",args)
+    if(args.model == 'few'):
+        fews(args)
     # if(args.model == 'smo'):
     #     SMO(args)
     # if(args.model == 'fews'):
