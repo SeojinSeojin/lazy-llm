@@ -48,62 +48,64 @@ def FEW(args, save_results = False, k = 1, model = None):
 
             # --- (1) No Ensemble: baseline ---
             if args.ensemble is None:
-                prompt_variants = [base_prompt]
+                text = model.generate_text(base_prompt)
+                if "best" in text.lower():
+                    return current
+                return None
 
             # --- (2) Self-Consistency Ensemble: same prompt + minor variants ---
             elif args.ensemble == "self-consistency":
-                prompt_variants = [
-                    base_prompt,
-                    base_prompt + [{"role": "system", "content": "Please think step by step before answering."}],
-                    base_prompt + [{"role": "system", "content": "Re-evaluate your reasoning carefully before deciding."}]
+                votes = []
+                num_reflections = 3
+
+                # Step 1
+                text1 = model.generate_text(base_prompt)
+                votes.append(text1)
+
+                # Step 2 - reflect on step 1
+                reflection_prompt = base_prompt + [
+                    {"role": "system", "content": f"Your previous reasoning: {text1}\nNow think step by step and re-evaluate your answer."}
                 ]
+                text2 = model.generate_text(reflection_prompt)
+                votes.append(text2)
+
+                # Step 3 - reflect on both previous steps
+                reflection_prompt_2 = base_prompt + [
+                    {"role": "system", "content": f"Previous reasoning attempts:\n1. {text1}\n2. {text2}\nNow make your final, consistent judgment."}
+                ]
+                text3 = model.generate_text(reflection_prompt_2)
+                votes.append(text3)
+
+                # --- Majority voting ---
+                best_votes = sum(1 for t in votes if t and "best" in t.lower())
+                if best_votes >= 2:
+                    return current
+                return None
 
             # --- (3) Heterogeneous Ensemble: different prompt templates ---
             elif args.ensemble == "heterogeneous":
-                from src.prompts.prompts import Template, Auto93Template, HpoTemplate
-                templates = [Template(), Auto93Template(), HpoTemplate()]
                 prompt_variants = [
-                    t.getFewShot(best, rest, current[:len(i.cols.x)], cols=i.cols.x)
-                    for t in templates
+                    base_prompt,
+                    # Focus on quantitative reasoning
+                    base_prompt + [{"role": "system", "content": "Focus on numeric differences and thresholds between examples."}],
+                    # Focus on qualitative reasoning
+                    base_prompt + [{"role": "system", "content": "Focus on qualitative patterns and logical rules rather than numeric values."}],
+                    # Emphasize contrastive reasoning
+                    base_prompt + [{"role": "system", "content": "Compare best and rest examples explicitly before making a decision."}]
                 ]
+                votes = []
 
-            # --- Run inference for all variants ---
-            votes = []
+                for p in prompt_variants:
+                    text = model.generate_text(p)
+                    if "best" in text.lower():
+                        votes.append(1)
+                    else:
+                        votes.append(0)
 
-            for p in prompt_variants:
-                success = False
-                retry_delay = 60  # start with 30 seconds (Gemini free-tier minimum)
-                max_retries = 5
-
-                for attempt in range(max_retries):
-                    try:
-                        text = model.generate_text(p)
-                        success = True
-                        break  # successful
-                    except Exception as e:
-                        err_msg = str(e).lower()
-                        if "429" in err_msg or "quota" in err_msg or "resourceexhausted" in err_msg:
-                            print(f"[WARN] Rate limit hit (attempt {attempt+1}/{max_retries}). "
-                                f"Retrying in {retry_delay} seconds...")
-                            time.sleep(retry_delay)
-                            retry_delay = int(retry_delay * 1.5)  # exponential backoff
-                        else:
-                            print(f"[ERROR] generate_text failed: {e}")
-                            break  # non-rate-limit error → stop retries
-
-                if not success:
-                    print(f"[ERROR] Skipping this prompt after {max_retries} failed attempts.")
-                    continue
-
-                if "best" in text.lower():
-                    votes.append(1)
-                else:
-                    votes.append(0)
-
-            # --- Voting decision (same output type as before) ---
-            if sum(votes) >= (len(votes) / 2):
-                return current
-            return None
+                # --- Voting decision (same output type as before) ---
+                if sum(votes) >= (len(votes) / 2):
+                    return current
+                return None
             
         
         def _smo1(todo:rows, done:rows) -> rows:
@@ -120,7 +122,7 @@ def FEW(args, save_results = False, k = 1, model = None):
                 done += [top]
                 done = _ranked(done, top, count)
                 elapsed_min = (time.time() - start_time) / 60
-                print(f"[TIMER] step {idx}/{len(todo)} took {elapsed_min:.2f} min")
+                print(f"[TIMER] step {idx}/{args.last} took {elapsed_min:.2f} min")
                 count += 1
             return done
 
@@ -129,10 +131,10 @@ def FEW(args, save_results = False, k = 1, model = None):
         i_sampled = random.choices(i.rows, k=k)
         todo_full = i_sampled[args.label:]
         sample_ratio = 0.2
-        sample_size = max(1, int(len(todo_full) * sample_ratio))
+        sample_size = min(max(1, int(len(todo_full) * sample_ratio)), 100)
         todo_subset = random.sample(todo_full, sample_size)
 
-        print(f"[INFO] Sampling {sample_size}/{len(todo_full)} rows (~{sample_ratio*100:.0f}%) for this run.")
+        print(f"[INFO] Sampling {sample_size}/{len(todo_full)} rows for this run.")
         return _smo1(todo_subset, _ranked(i_sampled[:args.label]))
 
     

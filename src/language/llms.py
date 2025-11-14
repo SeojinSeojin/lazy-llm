@@ -54,7 +54,6 @@ class Local_LLM(LLM):
         self.pipe = self.get_pipeline()
 
     def get_pipeline(self):
-
         if not self.cache:
             self.temp_dir = tempfile.mkdtemp()
             self.model = AutoModelForCausalLM.from_pretrained(self.model_name, cache_dir = self.temp_dir)
@@ -96,7 +95,11 @@ class Local_LLM(LLM):
     def unload_model(self): 
         del self.model
         gc.collect()
-        shutil.rmtree(self.temp_dir)
+        if hasattr(self, "temp_dir") and getattr(self, "temp_dir") and os.path.exists(self.temp_dir):
+            try:
+                shutil.rmtree(self.temp_dir)
+            except Exception:
+                pass
 
     def generate_text(self, messages: list) -> str:
         """Generate text for chat-style messages (local HuggingFace)."""

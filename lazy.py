@@ -43,7 +43,7 @@ def fews(args):
         exploit=lambda B, R: B - R,
         EXPLORE=lambda B, R: (e**B + e**R) / abs(e**B - e**R + 1E-30)
     )
-    repeats = 20
+    repeats = 10 #20
     d = DATA(csv(args.dataset))
     rxs = {}
 
@@ -65,9 +65,9 @@ def fews(args):
         # {"name": "gemini", "lasts": [10], "repeats": 3, "ensemble": None},
         # {"name": "gemini", "lasts": [10], "repeats": 3, "ensemble": "self-consistency"},
         # {"name": "gemini", "lasts": [10], "repeats": 3, "ensemble": "heterogeneous"},
-        {"name": "phi3-mini", "lasts" : [20], "repeats" : 10, "ensemble": None}, 
-        {"name": "phi3-mini", "lasts" : [20], "repeats" : 10, "ensemble": "self-consistency"}, 
-        {"name": "phi3-mini", "lasts" : [20], "repeats" : 10, "ensemble": "heterogeneous"}, 
+        {"name": "phi3-mini", "lasts" : [20, 30], "repeats" : 10, "ensemble": None}, 
+        {"name": "phi3-mini", "lasts" : [20, 30], "repeats" : 10, "ensemble": "self-consistency"}, 
+        {"name": "phi3-mini", "lasts" : [20, 30], "repeats" : 10, "ensemble": "heterogeneous"}, 
     ]
 
     print("Configured tests:", tests)
@@ -110,20 +110,20 @@ def fews(args):
         ("SimAnneal", lambda B, R, I, N: abs(((B + 1) ** m(I, N, 1) + (R + 1)) / (abs(B - R) + 1E-30))),
     ]
 
-    for last in [20, 25, 30, 35, 40, 45, 50, 55, 60]:
-        the.Last = last
-        guess = lambda: clone(d, random.choices(d.rows, k=last), rank=True).rows[0]
-        rx = f"random,{last}"
-        rxs[rx] = SOME(txt=rx, inits=[d2h(d, guess()) for _ in range(repeats)])
-        for guessFaster in [True]:
-            for what, how in scoring_policies:
-                the.GuessFaster = guessFaster
-                rx = f"{what},{the.Last}"
-                rxs[rx] = SOME(txt=rx)
-                for _ in range(repeats):
-                    btw(".")
-                    rxs[rx].add(d2h(d, smo(d, how)[0]))
-                btw("\n")
+    # for last in [20, 25, 30, 35, 40, 45, 50, 55, 60]:
+    #     the.Last = last
+    #     guess = lambda: clone(d, random.choices(d.rows, k=last), rank=True).rows[0]
+    #     rx = f"random,{last}"
+    #     rxs[rx] = SOME(txt=rx, inits=[d2h(d, guess()) for _ in range(repeats)])
+    #     for guessFaster in [True]:
+    #         for what, how in scoring_policies:
+    #             the.GuessFaster = guessFaster
+    #             rx = f"{what},{the.Last}"
+    #             rxs[rx] = SOME(txt=rx)
+    #             for _ in range(repeats):
+    #                 btw(".")
+    #                 rxs[rx].add(d2h(d, smo(d, how)[0]))
+    #             btw("\n")
 
     # --------------------------------------------
     # 7️⃣ Generate report
